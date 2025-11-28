@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Gargantua: GP Metric Simulation</title>
+    <title>Gargantua: Ultimate Physic Simulation</title>
     <style>
         body {
             margin: 0;
             overflow: hidden;
             background-color: #000;
-            font-family: "Menlo", "Consolas", monospace; /* 使用等宽字体增强科幻感 */
+            font-family: "Menlo", "Consolas", monospace;
             touch-action: none;
         }
         
@@ -26,7 +26,7 @@
             top: 0; left: 0;
             width: 100%; height: 100%;
             z-index: 10;
-            pointer-events: none; /* 让点击穿透到 Canvas */
+            pointer-events: none;
             padding: 20px;
             box-sizing: border-box;
             display: flex;
@@ -68,7 +68,6 @@
         .data-label { color: rgba(100, 200, 255, 0.7); }
         .data-value { color: #fff; font-weight: bold; }
         
-        /* 警告状态样式 */
         .status-normal { color: #44ffaa; }
         .status-warning { color: #ffaa00; animation: pulse 2s infinite; }
         .status-danger { color: #ff3333; animation: flash 0.5s infinite; }
@@ -146,7 +145,6 @@
     </style>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <!-- 使用 PointerLockControls 以便获得类似飞行的体验，或者继续使用 OrbitControls 但允许穿透 -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 </head>
 <body>
@@ -194,7 +192,6 @@
                     <span>SPIN (自旋 a/M)</span>
                     <span id="lbl-spin">0.00</span>
                 </div>
-                <!-- Spin 0 到 0.99 (Kerr黑洞极限) -->
                 <input type="range" id="inp-spin" min="0.0" max="0.99" step="0.01" value="0.0">
             </div>
 
@@ -227,15 +224,10 @@
         uniform vec3 iCameraRight;
         uniform float iFOV;
 
-        // 交互参数
-        uniform float uMass;      // 黑洞质量
-        uniform float uSpin;      // 自旋 (0.0 ~ 1.0)
+        uniform float uMass;      
+        uniform float uSpin;      
         uniform float uShowStar;
-        uniform float uMode;      // 0.0 = Real, 1.0 = Cinema
-        
-        // 预计算的半径 (由JS传入或Shader内计算，这里简化为Shader内基于Mass估算)
-        // 实际上 ISCO 和 视界半径会随 Spin 变化，我们在 JS 里算好吸积盘大小传进来更好，
-        // 但为了自洽，我们在 Shader 里用简单的 Kerr 近似。
+        uniform float uMode;      
 
         varying vec2 vUv;
 
@@ -261,23 +253,26 @@
             return f;
         }
 
-        // --- 背景生成 ---
+        // --- 背景生成 (Model 2 风格 - 深邃版) ---
         vec3 getBackground(vec3 rd) {
             vec3 col = vec3(0.0);
             
             if (uMode > 0.5) {
-                // Cinematic: 星云
-                float nebula = fbm(rd * 1.8 + vec3(1.0));
-                vec3 nebulaCol = mix(vec3(0.05, 0.0, 0.1), vec3(0.0, 0.1, 0.3), smoothstep(0.3, 0.7, nebula));
-                col += nebulaCol * 1.5;
-                float stars = pow(clamp(noise(rd * 200.0), 0.0, 1.0), 80.0) * 80.0;
+                // Cinematic: 深邃宇宙
+                col = vec3(0.005, 0.005, 0.02); // 暗底色
+                float nebula = fbm(rd * 1.5 + vec3(1.0));
+
+                // 黑色混入紫色，对比度更高
+                vec3 nebulaCol = mix(vec3(0.0), vec3(0.1, 0.0, 0.2), smoothstep(0.4, 0.8, nebula));
+                col += nebulaCol * 2.0;
+                
+                // 锐利且明亮的星星
+                float stars = pow(clamp(noise(rd * 150.0), 0.0, 1.0), 100.0) * 100.0;
                 col += vec3(stars);
             } else {
-                // Realism: 只有星星
-                float n = noise(rd * 350.0);
-                if (n > 0.98) {
-                    col += vec3(pow((n - 0.98) / 0.02, 6.0));
-                }
+                // Realism
+                float n = noise(rd * 300.0);
+                col += vec3(pow(max(0.0, n - 0.98) / 0.02, 12.0));
             }
             return col;
         }
@@ -293,14 +288,10 @@
             vec2 screenUV = vUv;
             uv.x *= iResolution.x / iResolution.y;
 
-            // 初始光线方向
             vec3 rayDir = normalize(iCameraDir + uv.x * iCameraRight * iFOV + uv.y * iCameraUp * iFOV);
             vec3 pos = iCameraPos;
 
-            // --- 物理参数计算 ---
-            // 视界半径 Rh = M + sqrt(M^2 - a^2)，这里简化 M=uMass
-            float rh = uMass + sqrt(uMass*uMass - uSpin*uSpin*uMass*uMass);
-            // ISCO 近似: 随着 Spin 增加，ISCO 减小。这里做一个线性插值近似用于视觉
+            // 物理参数
             float rInner = mix(6.0 * uMass, 1.2 * uMass, uSpin); 
             float rOuter = 15.0 * uMass;
 
@@ -308,68 +299,54 @@
             float glow = 0.0;
             float lensingArc = 0.0;
             
-            // 伴星位置
             vec3 starPos = vec3(15.0, 2.0 * uMass, -10.0);
             float starRadius = 1.5 * (uMass/4.0);
 
-            // --- Raymarching: Gullstrand-Painlevé (River Model) 近似 ---
-            // 在 GP 坐标中，空间以速度 v = -sqrt(2M/r) 流向奇点。
-            // 光相对于空间的速度是 c=1。
-            // 因此光在坐标系中的总速度是: v_light = rayDir + v_space
+            // --- Raymarching ---
             
             bool hitSingularity = false;
             float stepSize = 0.1;
+            float transmittance = 1.0; // <--- 新增：初始透射率为 1.0
 
             for(int i = 0; i < MAX_STEPS; i++) {
                 float r = length(pos);
                 
-                // 1. 计算空间流速 (River Velocity)
-                // v_space = -sqrt(2M/r) * r_hat
-                // 为了防止 r=0 除零，加个极小值
-                float escapeVel = sqrt(2.0 * uMass / (r + 0.001));
-                vec3 spaceVel = -normalize(pos) * escapeVel;
+                // --- 1. Kerr-Schild 空间流速近似 (Hardcore Physics) ---
+                // 计算旋转黑洞的几何参数
+                float a = uSpin * uMass;
+                // rho2 是 Kerr Metric 中的关键几何项
+                float rho2 = r*r + a*a * (pos.y*pos.y)/(r*r + 0.001); 
 
-                // 2. 自旋产生的参考系拖曳 (Frame Dragging) 近似
-                // 只有在非常靠近时才显著，表现为横向的空间流动
-                if (uSpin > 0.01) {
-                    vec3 up = vec3(0.0, 1.0, 0.0);
-                    vec3 dragDir = normalize(cross(up, pos));
-                    // 拖曳速度随 1/r^3 衰减 (近似)
-                    float dragMag = (2.0 * uMass * uMass * uSpin) / (r*r + 0.1); 
-                    spaceVel += dragDir * dragMag;
-                }
+                // 径向流速 (向内下落)
+                vec3 flowRadial = -normalize(pos) * sqrt(2.0 * uMass * r / (r*r + a*a));
 
-                // 3. 更新光线位置
-                // 光的总速度 = 自身的单位向量 + 空间流速
+                // 切向流速 (参考系拖曳) - 赤道处最强，随距离衰减
+                vec3 up = vec3(0,1,0);
+                vec3 flowTwist = normalize(cross(up, pos)) * (2.0 * uMass * a / (r*r*r + 0.1));
+
+                // 最终空间速度
+                vec3 spaceVel = flowRadial + flowTwist;
+
+                // --- 2. 光线与空间交互 ---
                 vec3 totalVel = rayDir + spaceVel;
-                
-                // 动态步长：远处步长长，近处步长短
                 stepSize = max(0.05, r * 0.05);
                 
-                // 如果在视界内，允许光线继续被吸入
-                // GP坐标系的特点：在视界处 spaceVel = 1.0 (光速)，如果 rayDir 向外，则总速度为0（光停滞），如果向内则加速。
-                // 我们的模拟会自动处理这个，无需特殊 if 判断，从而实现平滑穿越。
-                
+                // 如果在视界内，允许光线继续演化 (GP坐标特性)
                 pos += totalVel * stepSize;
 
-                // 4. 更新光线方向 (Ray Bending / Geodesic deviation)
-                // 在 River Model 中，光线方向实际上不需要像牛顿力学那样弯曲，
-                // 而是通过 "advection" 自动弯曲。
-                // 但是为了视觉效果更锐利，我们修正 rayDir 以保持其相对于空间的归一化
-                // (这是简化的 Hamiltonian 光学处理)
-                // 一个简单的技巧：根据空间速度梯度的影响稍微旋转 rayDir (模拟测地线)
-                // 但在 WebGL 中，最简单且效果最好的是让 pos 随流而动，
-                // 同时 rayDir 缓慢向奇点弯曲以模拟时空曲率:
+                // --- 3. 光线方向弯曲 (Geodesic Deviation + Twist) ---
+                // 引入 twist 以增强视觉上的“卷曲感”
                 vec3 toCenter = -normalize(pos);
-                float bendStrength = (uMass) / (r*r + 0.1); 
-                rayDir = normalize(rayDir + toCenter * bendStrength * stepSize * 2.0);
+                float r2 = r*r + 0.01;
+                float bendStrength = (uMass) / r2; 
+                vec3 twistVisual = vec3(-pos.z, 0.0, pos.x) * (uSpin * 0.5 / r2);
+                
+                rayDir = normalize(rayDir + (toCenter * bendStrength + twistVisual) * stepSize * 2.0);
 
                 // --- 碰撞检测 ---
-                
-                // 奇点 (Singularity)
                 if (r < 0.1) {
                     hitSingularity = true;
-                    col = vec3(0.0); // 纯黑
+                    col = vec3(0.0);
                     break;
                 }
 
@@ -377,73 +354,92 @@
                 if (uShowStar > 0.5) {
                     float dStar = length(pos - starPos) - starRadius;
                     if (dStar < 0.0) {
-                        col += vec3(0.4, 0.7, 1.0) * 8.0; 
-                        hitSingularity = true; // 借用变量停止
+                        col += vec3(0.4, 0.7, 1.0) * 8.0 * transmittance; 
+                        hitSingularity = true; 
                         break;
                     }
-                    col += vec3(0.1, 0.3, 0.8) * (0.1 / (dStar*dStar + 0.1)) * stepSize;
+                    col += vec3(0.1, 0.3, 0.8) * (0.1 / (dStar*dStar + 0.1)) * stepSize * transmittance;
                 }
 
-                // --- 吸积盘渲染 (Volumetric) ---
-                // 吸积盘位于 y=0 平面
+                // --- 吸积盘渲染 (物理增强版：透射率 + 黑体辐射) ---
                 float diskThickness = 0.45 * uMass;
                 float distToPlane = abs(pos.y);
-                if (distToPlane < diskThickness && r > rInner && r < rOuter) {
-                    float radialFade = smoothstep(rInner, rInner + 1.0, r) 
-                                     * smoothstep(rOuter, rOuter - 4.0, r);
-                    float baseNoise = fbm(pos * 0.4 + vec3(0.0, iTime * 0.12, 0.0));
-                    float warpedY = pos.y + (baseNoise - 0.5) * diskThickness * 0.35;
+                
+                // 只有当光线没有被完全阻挡时才计算吸积盘
+                if (transmittance > 0.01 && distToPlane < diskThickness && r > rInner && r < rOuter) {
+                    
+                    // 1. 密度衰减 (Fade)
+                    float radialFade = smoothstep(rInner, rInner + 1.5, r) * smoothstep(rOuter, rOuter - 4.0, r);
+                    float verticalFade = smoothstep(diskThickness, 0.0, distToPlane);
+                    
+                    // 2. 形状扰动 (Noise)
+                    float angle = atan(pos.z, pos.x);
+                    float orbitalSpeed = sqrt(uMass / r) + (uSpin / r);
+                    float rotOffset = iTime * orbitalSpeed * 4.0;
+                    
+                    vec3 noiseP = vec3(angle * 4.0 + rotOffset, r * 0.5, pos.y * 3.0);
+                    float density = fbm(noiseP);
+                    
+                    // 最终强度
+                    float intensity = density * verticalFade * radialFade;
 
-                    for (int layer = 0; layer < 2; layer++) {
-                        float layerOffset = (float(layer) - 0.5) * 0.25 * diskThickness;
-                        float layerY = warpedY + layerOffset;
-                        float layerDist = abs(layerY);
-                        float layerFade = smoothstep(diskThickness, 0.0, layerDist) * radialFade;
-
-                        if (layerFade > 0.001) {
-                            float angle = atan(pos.z, pos.x);
-                            float speed = 5.0 * sqrt(uMass) / pow(r, 1.5);
-                            float rotOffset = iTime * speed + float(layer) * 0.8;
-                            
-                            vec3 noiseP = vec3(angle * 4.5 + rotOffset, r * 0.55 + float(layer) * 0.4, layerY * 1.8);
-                            float density = fbm(noiseP);
-                            
-                            float intensity = density * layerFade * 2.4;
-
-                            if (intensity > 0.005) {
-                                vec3 cHot = vec3(1.2, 1.0, 0.8);
-                                vec3 cWarm = vec3(1.0, 0.6, 0.2);
-                                vec3 cCool = vec3(0.6, 0.3, 0.05);
-                                float t = clamp((r - rInner) / (rOuter - rInner), 0.0, 1.0);
-                                vec3 diskCol = mix(mix(cHot, cWarm, pow(t, 0.6)), cCool, t);
-                                diskCol *= 0.8 + 0.2 * density;
-                                
-                                vec3 diskVel = normalize(vec3(-pos.z, 0.0, pos.x));
-                                float doppler = pow(0.6 + 0.4 * (1.0 - dot(rayDir, diskVel)), 4.0);
-                                vec3 raySide = normalize(vec3(rayDir.z, 0.0, -rayDir.x));
-                                float blueShift = 0.5 + 0.5 * dot(diskVel, raySide);
-                                vec3 dopplerTint = mix(vec3(1.2, 0.8, 0.6), vec3(0.5, 0.7, 1.2), blueShift);
-                                diskCol *= dopplerTint;
-                                
-                                col += diskCol * intensity * doppler * stepSize * 0.6;
-                                glow += intensity * stepSize * 0.12;
-                                lensingArc += intensity * smoothstep(0.0, -diskThickness, layerY);
-                            }
-                        }
+                    if (intensity > 0.05) {
+                        // --- 物理颜色：温度梯度 (Temperature Gradient) ---
+                        float t = clamp((r - rInner) / (rOuter - rInner), 0.0, 1.0);
+                        
+                        vec3 cInner = vec3(1.5, 1.3, 1.0); // 极亮白偏黄
+                        vec3 cMid   = vec3(1.0, 0.5, 0.1); // 橙色
+                        vec3 cOuter = vec3(0.5, 0.05, 0.02); // 深红
+                        
+                        vec3 diskCol = mix(cInner, cMid, smoothstep(0.0, 0.3, t));
+                        diskCol = mix(diskCol, cOuter, smoothstep(0.3, 1.0, t));
+                        
+                        // --- 多普勒效应 ---
+                        vec3 diskVel = normalize(vec3(-pos.z, 0.0, pos.x));
+                        float beamFactor = dot(rayDir, diskVel);
+                        
+                        // 亮度增强
+                        float dopplerBright = pow(0.5 + 0.5 * (1.0 - beamFactor), 3.0);
+                        // 频移颜色
+                        vec3 shiftColor = mix(vec3(1.0, 0.8, 0.6), vec3(0.7, 0.9, 1.2), beamFactor * 0.5 + 0.5);
+                        
+                        diskCol *= dopplerBright * shiftColor;
+                        
+                        // --- 物理光照合成 (Beer's Law) ---
+                        float alpha = intensity * 0.25 * stepSize;
+                        
+                        // 累加颜色
+                        col += diskCol * transmittance * alpha * 4.0;
+                        glow += intensity * transmittance * stepSize * 0.5;
+                        lensingArc += intensity * transmittance * smoothstep(0.0, -diskThickness, pos.y);
+                        
+                        // 更新透射率
+                        transmittance *= (1.0 - alpha);
+                        
+                        if (transmittance < 0.01) break; 
                     }
                 }
                 
                 if (r > MAX_DIST) break;
             }
 
-            // 背景合成
+            // 背景合成 (修正为透射率逻辑)
             if (!hitSingularity) {
                 vec3 bg = getBackground(rayDir);
-                // 简单的引力红移模拟：光线越靠近黑洞出来，越暗/红 (此处仅做亮度衰减)
-                col += bg * max(0.0, 1.0 - glow);
+                
+                // 红移逻辑
+                float rs = 2.0 * uMass;
+                float rCam = length(iCameraPos);
+                float redshift = 1.0;
+                if (rCam < rs * 3.0) {
+                     redshift = clamp(rCam / (rs * 2.0), 0.0, 1.0);
+                }
+                
+                // 只有没被吸积盘挡住的光线(transmittance)才能显示背景
+                col += bg * transmittance * redshift;
             }
 
-            col += vec3(1.15, 0.85, 0.55) * lensingArc * smoothstep(0.4, 1.0, screenUV.y);
+            col += vec3(1.15, 0.85, 0.55) * lensingArc * smoothstep(0.4, 1.0, screenUV.y) * 0.5;
 
             col = ACESFilm(col);
             col = pow(col, vec3(1.0/2.2));
@@ -454,7 +450,7 @@
 
     <script>
         const container = document.getElementById('canvas-container');
-        const pixelRatio = window.devicePixelRatio; // 全量像素比，极致清晰
+        const pixelRatio = window.devicePixelRatio;
 
         const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
         renderer.setSize(window.innerWidth, window.innerHeight);
@@ -463,15 +459,13 @@
 
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-        
-        // 初始位置设置得稍微远一点，方便观察
         camera.position.set(0, 6, 100); 
 
         const controls = new THREE.OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
         controls.dampingFactor = 0.05;
         controls.enablePan = true;
-        controls.minDistance = 0.1; // 允许极其接近
+        controls.minDistance = 0.1;
         controls.maxDistance = 500;
         controls.rotateSpeed = 0.3;
         controls.zoomSpeed = 1.2;
@@ -500,7 +494,7 @@
         mesh.frustumCulled = false;
         scene.add(mesh);
 
-        // --- 物理计算逻辑 (Gargantua Logic) ---
+        // --- 物理计算逻辑 ---
 
         const UI = {
             dist: document.getElementById('disp-dist'),
@@ -514,42 +508,24 @@
             spinLabel: document.getElementById('lbl-spin'),
         };
 
-        // 计算Kerr黑洞的关键半径
         function calcBlackHoleProperties(M, a_star) {
-            // a_star = J / M^2 (0 ~ 1)
-            // 物理上的 a = a_star * M
-            // 视界 Rh = M + sqrt(M^2 - a^2)
             const a = a_star * M;
             const rh = M + Math.sqrt(M*M - a*a);
             
-            // ISCO (最内稳定圆轨道)
-            // Z1 = 1 + (1 - a*^2)^(1/3) * ((1 + a*)^(1/3) + (1 - a*)^(1/3))
-            // Z2 = sqrt(3*a*^2 + Z1^2)
-            // R_isco = M * (3 + Z2 - sqrt((3 - Z1)(3 + Z1 + 2*Z2)))
-            // (这是顺行轨道公式，逆行会更大)
             const Z1 = 1 + Math.pow(1 - a_star*a_star, 1.0/3.0) * (Math.pow(1 + a_star, 1.0/3.0) + Math.pow(1 - a_star, 1.0/3.0));
             const Z2 = Math.sqrt(3 * a_star * a_star + Z1 * Z1);
             const iscoFactor = 3 + Z2 - Math.sqrt((3 - Z1) * (3 + Z1 + 2 * Z2));
             const isco = M * iscoFactor;
-
-            // 光子球 (Photon Sphere)
-            // 史瓦西是 3M，极值克尔是 M (顺行)。
-            // 近似公式: R_ph ≈ 2M (1 + cos(2/3 * acos(-|a*|)))
             const ph = 2 * M * (1 + Math.cos(2.0/3.0 * Math.acos(-a_star)));
 
             return { rh, isco, ph };
         }
 
         function updateHUD(dist, M, props) {
-            // 距离显示
             UI.dist.innerText = dist.toFixed(2) + " M";
             
-            // 区域判定
             let zoneText = "INTERSTELLAR (星际空间)";
             let statusClass = "status-normal";
-            
-            // 能层 (Ergosphere) 半径 Re = M + sqrt(M^2 - a^2 cos^2(theta))
-            // 简化判断：赤道面上 Re = 2M
             const ergosphereRad = 2.0 * M; 
 
             if (dist < props.rh) {
@@ -568,8 +544,6 @@
 
             UI.zone.innerText = zoneText;
             UI.zone.className = "data-value " + statusClass;
-
-            // 更新参考数值
             UI.rh.innerText = props.rh.toFixed(2) + " u";
             UI.isco.innerText = props.isco.toFixed(2) + " u";
             UI.ph.innerText = props.ph.toFixed(2) + " u";
@@ -621,18 +595,12 @@
             const M = material.uniforms.uMass.value;
             const spin = material.uniforms.uSpin.value;
             const props = calcBlackHoleProperties(M, spin);
-
-            // 取当前相机位置方向作为出射方向，若过近则默认沿 X 轴
             const outward = camera.position.clone();
             if (outward.lengthSq() < 1e-4) outward.set(1, 0, 0);
             outward.normalize();
-
-            // 放置在视界外一小段距离
             const horizonRadius = props.rh * 1.02;
             const horizonPos = outward.clone().multiplyScalar(horizonRadius);
             camera.position.copy(horizonPos);
-
-            // 面向外太空（沿半径方向）
             const lookTarget = horizonPos.clone().add(outward.clone().multiplyScalar(M * 5.0));
             controls.target.copy(lookTarget);
             controls.update();
@@ -658,11 +626,9 @@
             const time = clock.getElapsedTime();
             controls.update();
 
-            // 更新 Uniforms
             material.uniforms.iTime.value = time;
             material.uniforms.iCameraPos.value.copy(camera.position);
 
-            // 更新相机矩阵给 Shader
             camera.getWorldDirection(vecForward);
             vecUp.copy(camera.up).applyQuaternion(camera.quaternion);
             vecRight.crossVectors(vecForward, vecUp).normalize();
@@ -673,7 +639,6 @@
             material.uniforms.iCameraRight.value.copy(vecRight);
             material.uniforms.iFOV.value = Math.tan((camera.fov * Math.PI / 180) * 0.5);
 
-            // HUD 计算
             const currentDist = camera.position.length();
             const M = material.uniforms.uMass.value;
             const spin = material.uniforms.uSpin.value;
